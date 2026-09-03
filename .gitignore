@@ -16,3 +16,6 @@ node_modules/
 Game-backup-netlify/
 Game-backup-netlify-2026-08-26/
 Game-frozen-*/
+
+.vercel
+.env*

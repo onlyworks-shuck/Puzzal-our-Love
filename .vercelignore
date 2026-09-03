@@ -1,0 +1,8 @@
+# Nothing here is needed by the deployment, and the backup folders are ~81MB
+# of real chat media that must never leave this machine.
+node_modules
+.netlify
+.blob-token
+Game-backup-netlify/
+Game-backup-netlify-2026-08-26/
+Game-frozen-*/
