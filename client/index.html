@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>2048 Puzzle</title>
+  <meta name="description" content="A fast, animated 2048 puzzle game." />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32" />
+  <link rel="icon" href="icon-192.png" type="image/png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="theme-color" content="#0b0b12" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="2048" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="splash-screen" id="splash-screen">
+    <img src="icon.png" alt="" class="splash-logo" />
+    <div class="splash-spinner"></div>
+  </div>
+
+  <div class="game-view" id="game-view">
+    <div class="game-topbar">
+      <button class="game-icon-btn" id="reset-btn" title="Reset game" aria-label="Reset game">&#8635;</button>
+      <div class="game-score-display">
+        <span class="game-score-live" id="game-score">0</span>
+        <span class="game-score-best-label">BEST <span id="game-best">0</span></span>
+      </div>
+      <button class="game-icon-btn" id="settings-btn" title="Settings" aria-label="Settings">&#9881;</button>
+    </div>
+
+    <div class="game-wrapper">
+      <div class="game-card">
+        <div class="game-card-header">
+          <h1>2048</h1>
+        </div>
+
+        <div class="game-board-wrap">
+          <div class="game-board" id="game-board"></div>
+
+          <div class="game-overlay hidden" id="game-overlay">
+            <div class="game-overlay-message" id="game-overlay-message"></div>
+            <button class="btn btn-primary" id="game-overlay-btn">Try Again</button>
+          </div>
+        </div>
+
+        <!-- Starts hidden only to avoid a flash for people already running the
+             installed app; pwa.js reveals it for everyone else. It is shown
+             even where `beforeinstallprompt` never fires (in-app browsers,
+             iOS, Firefox, Safari) because the app is installable by hand
+             there — pressing it then explains how, per browser. -->
+        <button class="install-btn hidden" id="install-btn">&#11015; Install Puzzle Game</button>
+      </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="settings-modal">
+      <div class="modal settings-modal">
+        <div class="modal-header">
+          <span class="password-modal-icon">&#9881;</span>
+          <h3>Settings</h3>
+          <button class="icon-btn settings-close-btn" id="settings-close">&times;</button>
+        </div>
+        <div class="settings-body">
+          <div class="theme-toggle-row">
+            <span>Day / Night</span>
+            <label class="switch">
+              <input type="checkbox" id="game-theme-toggle" />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shown when the browser offers no one-tap install (in-app browsers,
+         iOS, Firefox, Safari). Filled in by pwa.js with steps for the
+         browser actually in use. -->
+    <div class="modal-overlay hidden" id="install-help-modal">
+      <div class="modal install-help-modal">
+        <div class="modal-header">
+          <span class="password-modal-icon">&#11015;</span>
+          <h3>Install Puzzle Game</h3>
+          <button class="icon-btn settings-close-btn" id="install-help-close" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div class="install-help-body">
+          <p class="install-help-intro" id="install-help-intro"></p>
+          <ol class="install-help-steps" id="install-help-steps"></ol>
+          <button type="button" class="btn btn-ghost install-help-copy hidden" id="install-help-copy">Copy link</button>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" id="install-help-ok">Got it</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="puzzle-password-modal">
+      <div class="modal password-modal">
+        <div class="modal-header">
+          <span class="password-modal-icon">&#128274;</span>
+          <h3>Enter Password</h3>
+        </div>
+        <form id="puzzle-password-form">
+          <input type="password" class="text-input" id="puzzle-password-input" placeholder="Password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" />
+          <p class="password-modal-error hidden" id="puzzle-password-error">Incorrect password. Try again.</p>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-ghost" id="puzzle-password-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Unlock</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Shown for ANY wrong password so a guessed entry never hints that a
+         secret chat exists behind this prompt. -->
+    <div class="modal-overlay hidden" id="decoy-dashboard">
+      <div class="decoy-dashboard-card">
+        <div class="decoy-dashboard-icon">&#9888;&#65039;</div>
+        <h2>Official Developer Dashboard</h2>
+        <p class="decoy-dashboard-warning">Unauthorized access attempt detected.</p>
+        <p>Please do not attempt to enter. This activity has been logged.</p>
+        <div class="decoy-dashboard-log">
+          <div>[SYSTEM] Access attempt flagged — session fingerprint recorded</div>
+          <div>[SYSTEM] Report queued for administrator review</div>
+        </div>
+        <button class="btn btn-primary" id="decoy-dashboard-close">OK</button>
+      </div>
+    </div>
+
+    <!-- Shown right after the guest-tier password unlocks, before the chat
+         itself opens. -->
+    <div class="modal-overlay hidden" id="love-reveal-screen">
+      <div class="love-reveal-card">
+        <div class="love-reveal-icon">&#10084;&#65039;</div>
+        <h2>I realy love you mano</h2>
+        <button class="btn btn-primary" id="love-reveal-continue">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="chat-root" class="hidden">
+    <div class="secret-chat-backdrop"></div>
+    <div class="secret-shell">
+      <div class="secret-header" id="secret-header">
+        <button class="icon-btn" id="secret-back-btn" title="Back" aria-label="Back">&#8592;</button>
+        <!-- Whether the other side is in the chat right now. Starts Offline
+             and only ever changes on the server's word (see js/secret.js). -->
+        <div class="secret-presence" id="secret-presence" data-state="offline" aria-live="polite">
+          <span class="secret-presence-dot" aria-hidden="true"></span>
+          <span class="secret-presence-text" id="secret-presence-text">Offline</span>
+        </div>
+        <div class="secret-header-spacer"></div>
+        <!-- Admin-tier only: enters bulk select/delete mode for messages. -->
+        <button class="icon-btn hidden" id="secret-select-btn" title="Select messages" aria-label="Select messages">&#9989;</button>
+      </div>
+      <div class="secret-select-bar hidden" id="secret-select-bar">
+        <button class="icon-btn" id="secret-select-cancel-btn" title="Cancel" aria-label="Cancel">&times;</button>
+        <span id="secret-select-count">0 selected</span>
+        <div class="secret-header-spacer"></div>
+        <button class="btn btn-ghost secret-select-all-btn" id="secret-select-all-btn">Select all</button>
+        <button class="icon-btn" id="secret-select-delete-btn" title="Delete selected" aria-label="Delete selected" disabled>&#128465;</button>
+      </div>
+
+      <button class="secret-load-older-btn hidden" id="secret-load-older-btn">Load older messages</button>
+      <div class="secret-messages" id="secret-messages"></div>
+
+      <div class="composer">
+        <button class="icon-btn" id="secret-emoji-btn" title="Emoji">&#128512;</button>
+        <button class="icon-btn" id="secret-attach-btn" title="Attach photo or video">&#128206;</button>
+        <input type="file" id="secret-media-input" accept="image/*,video/*" multiple class="hidden" />
+        <button class="icon-btn" id="secret-camera-btn" title="Take photo or video">&#128247;</button>
+        <textarea id="secret-message-input" placeholder="Type a message" rows="1"></textarea>
+        <div class="recording-indicator hidden" id="secret-recording-indicator">
+          <span class="recording-dot"></span>
+          <span id="secret-recording-timer">0:00</span>
+        </div>
+        <button class="icon-btn hidden" id="secret-voice-cancel-btn" title="Cancel recording">&#128465;</button>
+        <button class="icon-btn" id="secret-mic-btn" title="Record voice message">&#127908;</button>
+        <button class="send-btn" id="secret-send-btn" title="Send">&#10148;</button>
+        <div class="emoji-picker hidden" id="secret-emoji-picker"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <div id="media-viewer" class="hidden">
+    <button class="icon-btn media-viewer-close" id="media-viewer-close" title="Close" aria-label="Close">&times;</button>
+    <div class="media-viewer-content" id="media-viewer-content"></div>
+  </div>
+
+  <div id="camera-modal" class="hidden">
+    <div class="camera-live-wrap" id="camera-live-wrap">
+      <video id="camera-live" autoplay playsinline muted></video>
+      <button class="icon-btn camera-close-btn" id="camera-close-btn" title="Close" aria-label="Close">&times;</button>
+      <div class="camera-live-controls">
+        <button class="camera-video-btn" id="camera-video-btn" title="Record video" aria-label="Record video"></button>
+        <button class="camera-shutter-btn" id="camera-shutter-btn" title="Take photo" aria-label="Take photo"></button>
+        <span class="camera-record-timer hidden" id="camera-record-timer">0:00</span>
+      </div>
+    </div>
+    <div class="camera-preview-wrap hidden" id="camera-preview-wrap">
+      <img id="camera-preview-img" class="hidden" alt="Captured photo preview" />
+      <video id="camera-preview-video" class="hidden" controls playsinline></video>
+      <div class="camera-preview-controls">
+        <button class="btn btn-ghost" id="camera-retake-btn">Retake</button>
+        <button class="btn btn-primary" id="camera-send-btn">Send</button>
+      </div>
+    </div>
+  </div>
+  <canvas id="camera-capture-canvas" class="hidden"></canvas>
+
+  <script src="config.js" defer></script>
+  <script src="js/api.js" defer></script>
+  <script src="js/emoji.js" defer></script>
+  <script src="js/secret.js" defer></script>
+  <script src="js/game.js" defer></script>
+  <script src="js/pwa.js" defer></script>
+</body>
+</html>

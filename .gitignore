@@ -1,0 +1,18 @@
+node_modules/
+.DS_Store
+
+# Local Vercel folder
+.vercel
+
+# Storage credential read by scripts/export-chat.js. Never commit this, and
+# never paste it into a chat — a credential in a transcript is a burned one.
+.blob-token
+
+# Netlify CLI local state
+.netlify
+
+# Exported chat/media backups pulled off the live host. Real user content and
+# tens of megabytes of binaries — keep these on disk, never in the repo.
+Game-backup-netlify/
+Game-backup-netlify-2026-08-26/
+Game-frozen-*/

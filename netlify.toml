@@ -1,0 +1,113 @@
+# Netlify deployment for the 2048 game + hidden chat.
+#
+# The site is published from client/ and the backend runs as functions in
+# netlify/functions/, each of which is a two-line wrapper around the matching
+# handler in /api. /api is the single source of truth shared with the Vercel
+# deployment — see netlify/lib/adapter.js.
+#
+# The adapter lives in netlify/lib/, not netlify/functions/, on purpose:
+# every top-level file in the functions directory is published as its own
+# function, so keeping it there deployed a 13th "function" with no handler
+# behind it.
+[build]
+  publish = "client"
+  functions = "netlify/functions"
+
+[build.environment]
+  # Matches "engines" in package.json. Only takes effect when Netlify runs
+  # the build itself; this site is published straight from the CLI, which
+  # skips the build step and uses the site's configured function runtime
+  # (currently Node 24). Kept so a future Git-linked build is pinned rather
+  # than inheriting whatever the default image moves to.
+  NODE_VERSION = "20"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Nightly sweep of upload chunks left behind by uploads that were started and
+# never finished. Scheduled rather than routed: it is a janitor, it is never
+# called by the app, and Netlify blocks direct HTTP access to a scheduled
+# function so it needs no public path of its own.
+[functions."cleanup-orphans"]
+  schedule = "0 3 * * *"
+
+# ---------------------------------------------------------------------------
+# API routes. The client only ever calls /api/... (see client/config.js), so
+# these names are the contract; the function filenames behind them are free to
+# change. Query strings are carried through automatically.
+# ---------------------------------------------------------------------------
+[[redirects]]
+  from = "/api/auth/register"
+  to = "/.netlify/functions/auth-register"
+  status = 200
+
+[[redirects]]
+  from = "/api/users/me"
+  to = "/.netlify/functions/users-me"
+  status = 200
+
+[[redirects]]
+  from = "/api/secret/unlock"
+  to = "/.netlify/functions/secret-unlock"
+  status = 200
+
+[[redirects]]
+  from = "/api/secret/messages"
+  to = "/.netlify/functions/secret-messages"
+  status = 200
+
+[[redirects]]
+  from = "/api/secret/send"
+  to = "/.netlify/functions/secret-send"
+  status = 200
+
+[[redirects]]
+  from = "/api/secret/delete"
+  to = "/.netlify/functions/secret-delete"
+  status = 200
+
+# Presence (Online/Offline) and read receipts. New since the last Netlify
+# deploy — its absence is why the blue ticks never appeared on this host.
+[[redirects]]
+  from = "/api/secret/session"
+  to = "/.netlify/functions/secret-session"
+  status = 200
+
+[[redirects]]
+  from = "/api/secret/media"
+  to = "/.netlify/functions/secret-media-upload"
+  status = 200
+
+[[redirects]]
+  from = "/api/secret/media-chunk"
+  to = "/.netlify/functions/secret-media-chunk"
+  status = 200
+
+[[redirects]]
+  from = "/api/secret/media-finish"
+  to = "/.netlify/functions/secret-media-finish"
+  status = 200
+
+[[redirects]]
+  from = "/api/secret/media-get"
+  to = "/.netlify/functions/secret-media-get"
+  status = 200
+
+# ---------------------------------------------------------------------------
+# Headers
+# ---------------------------------------------------------------------------
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# The service worker script itself must never be served from HTTP cache —
+# otherwise a browser's update check keeps comparing against a stale cached
+# copy and never detects a new deploy. That bit the installed mobile clients
+# once already: phones ran days-old JS while every laptop looked fine.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
