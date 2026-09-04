@@ -353,6 +353,14 @@ input, textarea { font-family: inherit; }
 .msg-media-error .msg-play-icon,
 .msg-media-error .msg-save-btn { display: none; }
 
+/* Downloaded, but this browser has no decoder for it (a WebM clip on an
+   iPhone, a .mov on Android). Retrying the download would fetch the same
+   bytes and fail the same way, so the label says what is actually wrong —
+   and the save button stays, because handing the file to another app is the
+   one thing that still works. */
+.msg-media-undecodable::after { content: 'Can\2019t be played here'; }
+.msg-media-undecodable .msg-save-btn { display: flex; }
+
 @media (prefers-reduced-motion: reduce) {
   .msg-audio-wrap[data-state='loading'] .msg-audio-status::before { animation: none; }
 }

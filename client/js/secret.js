@@ -575,6 +575,24 @@ function buildMessageRow(msg) {
     audioWrap.appendChild(status);
     audioWrap.appendChild(audioEl);
 
+    // Arriving intact and being playable are two different things, and only
+    // the first was ever checked. A voice note recorded in WebM on Android
+    // downloads perfectly onto an iPhone and then cannot be decoded there at
+    // all — the fetch resolves, the player is revealed, and it sits dead with
+    // nothing said. New recordings are MP4/AAC now (see AUDIO_RECORDING_TYPES)
+    // so this should stop happening, but everything already in the history
+    // keeps whatever format it was recorded in, and a .mov from an iPhone has
+    // the same problem in the other direction. Say so rather than showing a
+    // player that will never play.
+    audioEl.addEventListener('error', () => {
+      // Only meaningful once a source has actually been attached: clearing
+      // src to release a blob also fires this.
+      if (!audioEl.getAttribute('src')) return;
+      audioWrap.dataset.state = 'error';
+      status.textContent = 'This voice message can’t be played on this device';
+      status.disabled = false;
+    });
+
     const loadAudio = () => {
       audioWrap.dataset.state = 'loading';
       status.textContent = 'Loading voice message…';
@@ -629,9 +647,16 @@ function buildMessageRow(msg) {
     // which an <img>/<video> src can't send — fetch it as a blob instead
     // and point both the thumbnail and the save link at the object URL.
     let resolvedObjectUrl = null;
+    // Downloaded fine but the browser cannot decode it — a WebM clip opened
+    // on an iPhone, or a .mov from an iPhone opened on Android. Tracked
+    // separately from a failed download because the bytes are already here:
+    // re-fetching them would change nothing, so tapping must not pretend to
+    // retry, and the fullscreen viewer must not open onto a black rectangle.
+    let undecodable = false;
 
     const loadMedia = () => {
-      mediaWrap.classList.remove('msg-media-error');
+      mediaWrap.classList.remove('msg-media-error', 'msg-media-undecodable');
+      undecodable = false;
       resolveMedia(msg)
         .then((objectUrl) => {
           resolvedObjectUrl = objectUrl;
@@ -644,7 +669,26 @@ function buildMessageRow(msg) {
         .catch(() => mediaWrap.classList.add('msg-media-error'));
     };
 
+    // Same blind spot the voice player had: arriving is not the same as being
+    // playable, and only arriving was ever checked.
+    mediaEl.addEventListener('error', () => {
+      if (!mediaEl.getAttribute('src')) return;
+      undecodable = true;
+      // The second class swaps the "Tap to retry" label for one that is true
+      // here and keeps the save button, which is the only remaining way to
+      // get the file onto something that can open it.
+      mediaWrap.classList.add('msg-media-error', 'msg-media-undecodable');
+    });
+
     mediaEl.addEventListener('click', () => {
+      if (undecodable) {
+        toast(
+          msg.mediaType === 'video'
+            ? 'This video is in a format this device cannot play. Use the save button to open it elsewhere.'
+            : 'This image could not be displayed.'
+        );
+        return;
+      }
       if (resolvedObjectUrl) openMediaViewer(resolvedObjectUrl, msg.mediaType);
       else if (mediaWrap.classList.contains('msg-media-error')) loadMedia();
     });
@@ -977,6 +1021,54 @@ mediaInput.addEventListener('change', async () => {
   await sendMediaFiles(files);
 });
 
+// ---------- Recording formats ----------
+// What a browser records in and what the *other* phone can play back are two
+// different questions, and getting the first one right is what makes the
+// second one work. Left to itself Chrome records WebM (Opus audio, VP8/VP9
+// video) — which no iPhone can decode at all. A voice note or clip recorded
+// on Android or a laptop therefore arrived on an iPhone as a player that
+// simply never plays, and the reverse held for anything an iPhone recorded.
+//
+// MP4 carrying AAC audio and H.264 video is the one combination every side
+// of this conversation can both produce and play, so it is asked for first
+// and by exact codec. The exact codec matters: asking for a bare "audio/mp4"
+// gets you an MP4 full of Opus from Chrome — the right container around the
+// wrong payload, which fails on iOS exactly like WebM did while looking
+// compatible. The plainer entries below are fallbacks for browsers that
+// cannot honour the specific request; WebM stays last so a browser with no
+// MP4 recorder at all still records something.
+const AUDIO_RECORDING_TYPES = [
+  'audio/mp4;codecs=mp4a.40.2', // AAC-LC — plays on iOS, Android and desktop
+  'audio/mp4',
+  'audio/webm;codecs=opus',
+  'audio/webm'
+];
+
+const VIDEO_RECORDING_TYPES = [
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2', // H.264 baseline + AAC
+  'video/mp4',
+  'video/webm;codecs=vp8,opus',
+  'video/webm'
+];
+
+function pickRecordingType(candidates) {
+  if (!window.MediaRecorder) return undefined;
+  return candidates.find((type) => {
+    try {
+      return MediaRecorder.isTypeSupported(type);
+    } catch (err) {
+      return false;
+    }
+  });
+}
+
+// Falls back to the browser's own default when none of the candidates are
+// supported, rather than refusing to record at all.
+function createRecorder(stream, candidates) {
+  const mimeType = pickRecordingType(candidates);
+  return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+}
+
 // ---------- Camera capture (photo/video straight into chat) ----------
 // Uses getUserMedia + MediaRecorder/canvas instead of a file-input capture
 // flow so the device's live camera opens on both mobile and desktop, and so
@@ -1102,12 +1194,7 @@ function updateCameraRecordTimer() {
 
 function startVideoCapture() {
   cameraRecordedChunks = [];
-  const preferredMimeType = ['video/webm', 'video/mp4'].find(
-    (type) => window.MediaRecorder && MediaRecorder.isTypeSupported(type)
-  );
-  cameraRecorder = preferredMimeType
-    ? new MediaRecorder(cameraStream, { mimeType: preferredMimeType })
-    : new MediaRecorder(cameraStream);
+  cameraRecorder = createRecorder(cameraStream, VIDEO_RECORDING_TYPES);
 
   cameraRecorder.addEventListener('dataavailable', (e) => {
     if (e.data.size > 0) cameraRecordedChunks.push(e.data);
@@ -1229,12 +1316,7 @@ async function startVoiceRecording() {
   audioChunks = [];
   voiceRecordingCancelled = false;
 
-  const preferredMimeType = ['audio/webm', 'audio/mp4'].find(
-    (type) => window.MediaRecorder && MediaRecorder.isTypeSupported(type)
-  );
-  mediaRecorder = preferredMimeType
-    ? new MediaRecorder(stream, { mimeType: preferredMimeType })
-    : new MediaRecorder(stream);
+  mediaRecorder = createRecorder(stream, AUDIO_RECORDING_TYPES);
 
   mediaRecorder.addEventListener('dataavailable', (e) => {
     if (e.data.size > 0) audioChunks.push(e.data);

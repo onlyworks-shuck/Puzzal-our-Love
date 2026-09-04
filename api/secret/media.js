@@ -31,7 +31,13 @@ module.exports = async (req, res) => {
       return json(res, 400, { error: 'No file uploaded' });
     }
     if (!ALLOWED_TYPES.has(parsed.file.mimeType)) {
-      return json(res, 400, { error: 'Only images, videos and audio are allowed' });
+      // The rejected type is named. "Only images, videos and audio are
+      // allowed" is baffling when you have just picked a photo, and the
+      // answer is always in the type the browser actually sent (an iPhone
+      // handing over image/heic, say) — which nobody could see from here.
+      return json(res, 400, {
+        error: `${parsed.file.mimeType || 'That file type'} is not supported here — send a JPEG, PNG, MP4 or a recorded voice note.`
+      });
     }
 
     // Stored the same single-chunk way a chunked upload would be (see

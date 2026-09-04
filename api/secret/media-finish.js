@@ -44,7 +44,12 @@ module.exports = async (req, res) => {
       return json(res, 400, { error: 'Invalid chunk count' });
     }
     if (!mimeType || !ALLOWED_TYPES.has(mimeType)) {
-      return json(res, 400, { error: 'Only images, videos and audio are allowed' });
+      // Named, for the same reason as in media.js: the rejected type is the
+      // only thing that explains the rejection, and it is invisible to the
+      // person holding the phone otherwise.
+      return json(res, 400, {
+        error: `${mimeType || 'That file type'} is not supported here — send a JPEG, PNG, MP4 or a recorded voice note.`
+      });
     }
     if (!Number.isFinite(totalSize) || totalSize <= 0 || totalSize > MAX_TOTAL_BYTES) {
       return json(res, 400, { error: 'File is too large' });

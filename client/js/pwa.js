@@ -114,12 +114,23 @@ if (isStandalone) markInstalled();
 else showInstallButton();
 
 // Chrome can also confirm an install directly, which covers the case where
-// the app was installed before this flag existed.
-if (navigator.getInstalledRelatedApps) {
-  navigator
+// the app was installed before this flag existed. This only ever answers
+// anything because manifest.json now declares the app under
+// `related_applications` — without that entry there is nothing for Chrome to
+// match against and the call always resolved to an empty list, so the check
+// had been dead code since it was written.
+function checkInstalledRelatedApps() {
+  if (!navigator.getInstalledRelatedApps) return Promise.resolve(false);
+  return navigator
     .getInstalledRelatedApps()
-    .then((apps) => {
-      if (apps && apps.length > 0) markInstalled();
+    .then((apps) => !!(apps && apps.length > 0))
+    .catch(() => false);
+}
+
+if (navigator.getInstalledRelatedApps) {
+  checkInstalledRelatedApps()
+    .then((installed) => {
+      if (installed) markInstalled();
     })
     .catch(() => {});
 }
@@ -306,6 +317,18 @@ installBtn?.addEventListener('click', async () => {
     const promptEvent = await waitForPrompt(1200);
 
     if (!promptEvent) {
+      // On a browser that *does* have the one-tap flow, the usual reason no
+      // event arrived is that the app is already installed — Chrome stops
+      // offering an install it has already performed. Handing that person a
+      // page of manual steps is the single most confusing thing this button
+      // can do, so ask before assuming.
+      if (supportsInstallPrompt && (await checkInstalledRelatedApps())) {
+        markInstalled();
+        if (typeof toast === 'function') {
+          toast('Already installed — open 2048 Puzzle from your home screen.');
+        }
+        return;
+      }
       openInstallHelp();
       return;
     }
@@ -313,9 +336,18 @@ installBtn?.addEventListener('click', async () => {
     // Cleared before awaiting: a prompt event can only be used once, so a
     // second click while the dialog is open must not try to reuse it.
     deferredInstallPrompt = null;
-    promptEvent.prompt();
 
-    const { outcome } = await promptEvent.userChoice;
+    // prompt() returns a promise, and it *rejects* on the cases that really
+    // happen here — an event a previous click already spent, or one whose
+    // user activation ran out. Calling it without awaiting left that
+    // rejection unhandled, which is a page-level error the browser reports
+    // in full, stack and all, while the button itself did nothing. Awaited,
+    // it lands in the catch below and falls back to the manual steps.
+    const promptResult = await promptEvent.prompt();
+
+    // Newer Chromium resolves prompt() with the choice directly; older
+    // builds only carry it on userChoice. Read whichever one answered.
+    const { outcome } = promptResult && promptResult.outcome ? promptResult : await promptEvent.userChoice;
     if (outcome === 'accepted') {
       markInstalled();
       // The button vanishing was the only feedback the old flow ever gave —
