@@ -20,6 +20,13 @@
   --wa-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   --wa-radius: 8px;
 
+  /* Named emoji fonts, ahead of anything else, so a system that owns one uses
+     it instead of falling through to a text font that draws boxes. The picker
+     inherited a plain "Segoe UI", Helvetica, Arial stack before this, which is
+     part of why emoji looked wrong on desktop and fine on phones. */
+  --emoji-font: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Android Emoji",
+    "EmojiOne Color", "Twemoji Mozilla", "Segoe UI Symbol";
+
   /* Game branding tokens — vibrant/dark theme matching icon.png, kept
      separate from the --wa-* chat tokens above so the hidden chat's
      look stays untouched. */
@@ -285,16 +292,123 @@ input, textarea { font-family: inherit; }
 .msg-audio-wrap {
   min-width: 220px;
 }
+/* The <audio> element is the engine only - never seen. Its native controls
+   are a full-width grey bar with a seek handle too small to hit on a phone,
+   no speed control, and a duration that reads "Infinity" for anything Android
+   recorded. .voice-player below replaces all of it. */
 .msg-audio {
-  width: 100%;
-  display: block;
+  display: none;
 }
 
-/* The player only appears once it actually holds audio. Before that a
-   browser draws an empty <audio> as a dead greyed-out control, which reads
-   as a voice message that failed to arrive rather than one still loading. */
-.msg-audio-wrap:not([data-state='ready']) .msg-audio { display: none; }
+/* The player only appears once it actually holds audio. Before that the status
+   line stands in, so a voice message still downloading is visibly different
+   from one that failed to arrive. */
+.msg-audio-wrap:not([data-state='ready']) .voice-player { display: none; }
 .msg-audio-wrap[data-state='ready'] .msg-audio-status { display: none; }
+
+.voice-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0 1px;
+  /* The delete control sits half outside the bubble's top-right corner and
+     reaches ~18px back into it, right where the speed button ends up. Two tap
+     targets that close together is bad anywhere; when one of them deletes the
+     message it is a trap. This keeps them apart. */
+  padding-right: 18px;
+}
+
+.voice-play {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: var(--wa-teal);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+/* Drawn from characters rather than an icon font: two glyphs, no extra
+   request, and they swap on one attribute when playback starts. */
+.voice-play::before { content: '\25B6'; margin-left: 2px; }
+.msg-audio-wrap[data-playing] .voice-play::before { content: '\275A\275A'; margin-left: 0; letter-spacing: 1px; }
+
+/* The bar is 4px but the input is 18px tall, so the thing a thumb has to hit
+   is more than four pixels of it. */
+.voice-seek {
+  flex: 1;
+  min-width: 60px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.voice-seek::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--wa-teal) var(--voice-progress, 0%),
+    rgba(128, 128, 128, 0.35) var(--voice-progress, 0%)
+  );
+}
+.voice-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border: none;
+  border-radius: 50%;
+  background: var(--wa-teal);
+}
+.voice-seek::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(128, 128, 128, 0.35);
+}
+.voice-seek::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--wa-teal);
+}
+.voice-seek::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: var(--wa-teal);
+}
+
+.voice-time {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: right;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--wa-text-secondary);
+}
+
+.voice-speed {
+  flex-shrink: 0;
+  border: 1px solid var(--wa-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--wa-text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  min-width: 30px;
+}
+.voice-speed:hover { background: var(--wa-hover); }
 
 .msg-audio-status {
   display: block;
@@ -556,6 +670,37 @@ input, textarea { font-family: inherit; }
   line-height: 1.2;
 }
 .emoji-grid button:hover { background: var(--wa-hover); }
+
+/* ---------- Emoji rendering ---------- */
+/* Everywhere an emoji can appear: the picker, the message bubbles and the
+   composer. Without this the browser picks a font per character on its own
+   and Windows in particular lands on one with no colour emoji at all. */
+.emoji-grid button,
+.emoji-tabs button,
+.emoji-tones button,
+.emoji-search,
+.msg-text,
+.composer textarea,
+.toast {
+  font-family: var(--emoji-font), "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+/* Set by emoji.js only when the probe found glyphs the system fonts cannot
+   draw and the downloaded font covers them. Noto has to come *first* here,
+   not merely be present: font fallback happens per missing glyph, and a
+   system font that owns 🧑 and ⚕️ separately never falls through for 🧑‍⚕️ —
+   it just draws both of them. Only a font ordered ahead of it composes the
+   sequence. */
+:root.emoji-webfont .emoji-grid button,
+:root.emoji-webfont .emoji-tabs button,
+:root.emoji-webfont .emoji-tones button,
+:root.emoji-webfont .emoji-search,
+:root.emoji-webfont .msg-text,
+:root.emoji-webfont .composer textarea,
+:root.emoji-webfont .toast {
+  font-family: "Noto Color Emoji", var(--emoji-font), "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
 .emoji-empty {
   grid-column: 1 / -1;
   padding: 16px 8px;
