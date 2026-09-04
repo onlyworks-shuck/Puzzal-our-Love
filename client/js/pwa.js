@@ -105,6 +105,20 @@ window.addEventListener('beforeinstallprompt', (e) => {
     /* nothing to clear */
   }
   if (installBtn && !isStandalone) installBtn.classList.remove('hidden');
+  // Chrome decides an app is installable some seconds after load — on a phone
+  // on mobile data, comfortably later than the tap that opened the manual
+  // steps. Someone reading those instructions right now is being told to do
+  // by hand what the browser has just offered to do in one tap, which is the
+  // whole "it won't install, it just shows a wall of text" complaint. Upgrade
+  // the modal in place instead of letting them follow it.
+  //
+  // Guarded: storing the prompt above is the part that must never be lost, and
+  // a cosmetic upgrade to a modal is not worth risking it for.
+  try {
+    revealModalInstallOption();
+  } catch (err) {
+    /* modal not in the DOM yet — the button on the card still works */
+  }
 });
 
 // Running inside the installed app is proof it is installed, even on a
@@ -237,10 +251,26 @@ const helpModal = document.getElementById('install-help-modal');
 const helpIntro = document.getElementById('install-help-intro');
 const helpSteps = document.getElementById('install-help-steps');
 const helpCopyBtn = document.getElementById('install-help-copy');
+const helpInstallBtn = document.getElementById('install-help-install');
 
 function closeInstallHelp() {
   helpModal?.classList.add('hidden');
+  helpInstallBtn?.classList.add('hidden');
   document.querySelector('.install-help-fallback-input')?.remove();
+}
+
+// The browser has offered a real install while the manual steps are on
+// screen. Swap them for the one-tap route rather than making someone work
+// through instructions the offer has just made unnecessary. The tap itself
+// has to stay a real tap — prompt() needs a user gesture, so this reveals a
+// button rather than firing the install on its own.
+function revealModalInstallOption() {
+  if (!helpModal || helpModal.classList.contains('hidden')) return;
+  if (!helpInstallBtn || !helpIntro || !helpSteps) return;
+  helpIntro.textContent = 'Your browser can install this directly — no need for the steps below.';
+  helpSteps.classList.add('hidden');
+  helpCopyBtn?.classList.add('hidden');
+  helpInstallBtn.classList.remove('hidden');
 }
 
 function openInstallHelp() {
@@ -256,9 +286,15 @@ function openInstallHelp() {
   document.querySelector('.install-help-fallback-input')?.remove();
   helpIntro.innerHTML = info.intro;
   helpSteps.innerHTML = info.steps.map((step) => '<li>' + step + '</li>').join('');
+  helpSteps.classList.remove('hidden');
+  helpInstallBtn?.classList.add('hidden');
   helpCopyBtn?.classList.toggle('hidden', !info.offerCopy);
   if (helpCopyBtn) helpCopyBtn.textContent = 'Copy link';
   helpModal.classList.remove('hidden');
+
+  // The offer may already have landed between the tap and this modal
+  // opening, in which case there is no reason to show steps at all.
+  if (deferredInstallPrompt) revealModalInstallOption();
 }
 
 document.getElementById('install-help-close')?.addEventListener('click', closeInstallHelp);
@@ -311,10 +347,13 @@ function waitForPrompt(ms) {
   });
 }
 
-installBtn?.addEventListener('click', async () => {
-  installBtn.disabled = true;
+// The install itself, shared by the button on the card and the "Install now"
+// button that appears inside the manual-steps modal when the browser's offer
+// arrives late. `waitMs` is 0 for the modal, whose button only exists because
+// the offer is already in hand.
+async function runInstallFlow({ waitMs = 1200, onDone } = {}) {
   try {
-    const promptEvent = await waitForPrompt(1200);
+    const promptEvent = await waitForPrompt(waitMs);
 
     if (!promptEvent) {
       // On a browser that *does* have the one-tap flow, the usual reason no
@@ -370,8 +409,19 @@ installBtn?.addEventListener('click', async () => {
     showInstallButton();
     openInstallHelp();
   } finally {
-    installBtn.disabled = false;
+    onDone?.();
   }
+}
+
+installBtn?.addEventListener('click', () => {
+  installBtn.disabled = true;
+  runInstallFlow({ onDone: () => { installBtn.disabled = false; } });
+});
+
+helpInstallBtn?.addEventListener('click', () => {
+  helpInstallBtn.disabled = true;
+  closeInstallHelp();
+  runInstallFlow({ waitMs: 0, onDone: () => { helpInstallBtn.disabled = false; } });
 });
 
 window.addEventListener('appinstalled', () => {

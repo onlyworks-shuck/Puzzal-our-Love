@@ -91,6 +91,13 @@
           <button type="button" class="btn btn-ghost install-help-copy hidden" id="install-help-copy">Copy link</button>
         </div>
         <div class="modal-footer">
+          <!-- Chrome can take several seconds on a phone to decide the app is
+               installable, and the press that opened this modal will usually
+               have happened before that. When the offer does arrive, this
+               replaces the manual steps with the real one-tap install rather
+               than leaving someone following instructions they no longer
+               need. Revealed by pwa.js; never shown otherwise. -->
+          <button type="button" class="btn btn-primary hidden" id="install-help-install">Install now</button>
           <button type="button" class="btn btn-primary" id="install-help-ok">Got it</button>
         </div>
       </div>
