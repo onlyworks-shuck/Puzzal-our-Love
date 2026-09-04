@@ -530,6 +530,203 @@ function buildTicks(msg) {
   return ticks;
 }
 
+
+// ---------- Voice note player ----------
+// The browser's own <audio controls> was doing this job, and doing it badly on
+// a phone: a full-width grey bar with a seek handle too small to hit, a length
+// that reads as "Infinity" for anything Android recorded (WebM out of
+// MediaRecorder carries no duration in its header, so a player answers with
+// that placeholder until it has scanned the whole file), and no way to speed up
+// a rambling two-minute message. This is a compact player over a hidden
+// <audio>: play/pause, a real seek bar, the length, and a speed toggle.
+const voicePlayers = new Set();
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const total = Math.round(seconds);
+  return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+}
+
+// Only ever one voice note out loud at a time. Starting a second while the
+// first is still going is never what anyone meant, and through a phone speaker
+// it makes both unintelligible. Also used to silence the room when recording
+// starts, so nothing already playing gets captured into the new note.
+function pauseAllVoice(except) {
+  voicePlayers.forEach((audio) => {
+    if (audio !== except && !audio.paused) audio.pause();
+  });
+}
+
+const VOICE_SPEEDS = [1, 1.5, 2];
+const UNPLAYABLE_TEXT = 'This voice message can\u2019t be played on this device';
+
+function buildVoicePlayer(msg) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-audio-wrap';
+
+  // Stands in for the player until there is audio to play, then doubles as the
+  // retry control. A bare <audio> with no source draws as a dead greyed-out bar
+  // that says nothing, which is why a slow voice note read as a missing one.
+  const status = document.createElement('button');
+  status.type = 'button';
+  status.className = 'msg-audio-status';
+
+  const audio = document.createElement('audio');
+  audio.className = 'msg-audio';
+  // The source is an in-memory object URL by the time it is set, so loading it
+  // in full costs no network and is what makes the first tap play at once
+  // instead of buffering.
+  audio.preload = 'auto';
+
+  const player = document.createElement('div');
+  player.className = 'voice-player';
+
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'voice-play';
+  playBtn.setAttribute('aria-label', 'Play voice message');
+
+  const seek = document.createElement('input');
+  seek.type = 'range';
+  seek.className = 'voice-seek';
+  seek.min = '0';
+  seek.max = '1000';
+  seek.value = '0';
+  seek.setAttribute('aria-label', 'Seek');
+
+  const time = document.createElement('span');
+  time.className = 'voice-time';
+
+  const speedBtn = document.createElement('button');
+  speedBtn.type = 'button';
+  speedBtn.className = 'voice-speed';
+  speedBtn.textContent = '1\u00d7';
+  speedBtn.setAttribute('aria-label', 'Playback speed');
+
+  player.append(playBtn, seek, time, speedBtn);
+  wrap.append(status, player, audio);
+
+  // Measured by the sender while recording and carried on the message, so the
+  // length is known before a byte of audio is fetched - and it is the only
+  // trustworthy answer for a file whose container omits it.
+  let knownDuration = msg.mediaDurationMs > 0 ? msg.mediaDurationMs / 1000 : null;
+  time.textContent = formatDuration(knownDuration || 0);
+
+  function effectiveDuration() {
+    if (Number.isFinite(audio.duration) && audio.duration > 0) return audio.duration;
+    return knownDuration || 0;
+  }
+
+  function paint() {
+    const total = effectiveDuration();
+    const at = audio.currentTime || 0;
+    seek.value = String(total > 0 ? Math.min(1000, Math.round((at / total) * 1000)) : 0);
+    seek.style.setProperty('--voice-progress', (total > 0 ? (at / total) * 100 : 0) + '%');
+    // Counts up while playing, shows the total length when idle - so a row that
+    // has never been played still says how long the message is.
+    time.textContent = formatDuration(audio.paused && at === 0 ? total : at);
+  }
+
+  // A container with no duration reports Infinity until the whole file has been
+  // scanned. Seeking far past the end forces that scan; the browser clamps and
+  // then reports the real length. Only needed when the sender's own measurement
+  // is missing, which means messages sent before this shipped.
+  function resolveUnknownDuration() {
+    if (knownDuration || Number.isFinite(audio.duration)) return;
+    const restore = () => {
+      audio.removeEventListener('timeupdate', restore);
+      audio.currentTime = 0;
+      if (Number.isFinite(audio.duration)) knownDuration = audio.duration;
+      paint();
+    };
+    audio.addEventListener('timeupdate', restore);
+    try {
+      audio.currentTime = 1e101;
+    } catch (err) {
+      audio.removeEventListener('timeupdate', restore);
+    }
+  }
+
+  audio.addEventListener('loadedmetadata', () => {
+    if (Number.isFinite(audio.duration) && audio.duration > 0) knownDuration = audio.duration;
+    else resolveUnknownDuration();
+    paint();
+  });
+  audio.addEventListener('timeupdate', paint);
+  audio.addEventListener('play', () => {
+    pauseAllVoice(audio);
+    wrap.dataset.playing = 'true';
+    playBtn.setAttribute('aria-label', 'Pause voice message');
+  });
+  audio.addEventListener('pause', () => {
+    delete wrap.dataset.playing;
+    playBtn.setAttribute('aria-label', 'Play voice message');
+    paint();
+  });
+  audio.addEventListener('ended', () => {
+    audio.currentTime = 0;
+    paint();
+  });
+
+  function markUnplayable() {
+    wrap.dataset.state = 'error';
+    status.textContent = UNPLAYABLE_TEXT;
+    status.disabled = false;
+  }
+
+  // Arriving intact and being playable are two different things, and only the
+  // first was ever checked. A WebM note recorded on Android downloads perfectly
+  // onto an iPhone and cannot be decoded there at all - the fetch resolves, the
+  // player appears, and it sits dead with nothing said.
+  audio.addEventListener('error', () => {
+    if (!audio.getAttribute('src')) return; // clearing src to release a blob fires this too
+    markUnplayable();
+  });
+
+  playBtn.addEventListener('click', () => {
+    if (audio.paused) {
+      pauseAllVoice(audio);
+      audio.play().catch(markUnplayable);
+    } else {
+      audio.pause();
+    }
+  });
+
+  seek.addEventListener('input', () => {
+    const total = effectiveDuration();
+    if (total > 0) audio.currentTime = (Number(seek.value) / 1000) * total;
+    paint();
+  });
+
+  speedBtn.addEventListener('click', () => {
+    const next = VOICE_SPEEDS[(VOICE_SPEEDS.indexOf(audio.playbackRate) + 1) % VOICE_SPEEDS.length];
+    audio.playbackRate = next;
+    speedBtn.textContent = next + '\u00d7';
+  });
+
+  const loadAudio = () => {
+    wrap.dataset.state = 'loading';
+    status.textContent = 'Loading voice message\u2026';
+    status.disabled = true;
+    resolveMedia(msg)
+      .then((objectUrl) => {
+        audio.src = objectUrl;
+        wrap.dataset.state = 'ready';
+        voicePlayers.add(audio);
+        paint();
+      })
+      .catch(() => {
+        wrap.dataset.state = 'error';
+        status.textContent = 'Voice message didn\u2019t load \u2014 tap to retry';
+        status.disabled = false;
+      });
+  };
+
+  status.addEventListener('click', loadAudio);
+  loadAudio();
+  return wrap;
+}
+
 function buildMessageRow(msg) {
   const isOut = !!state.me && msg.senderId === state.me.id;
   const row = document.createElement('div');
@@ -550,69 +747,7 @@ function buildMessageRow(msg) {
   if (canSelect) bubble.classList.add('msg-bubble-noninteractive');
 
   if (msg.mediaUrl && msg.mediaType === 'audio') {
-    const audioWrap = document.createElement('div');
-    audioWrap.className = 'msg-audio-wrap';
-
-    // A voice message that is still downloading, one that failed, and one
-    // that was never sent all used to look identical: an <audio> element with
-    // no source renders as a dead greyed-out player and says nothing. That is
-    // why a slow voice note read as a missing one. The player is held back
-    // until it actually has audio, and this line stands in for it — reporting
-    // progress, and doubling as the retry control if the fetch fails.
-    const status = document.createElement('button');
-    status.type = 'button';
-    status.className = 'msg-audio-status';
-
-    const audioEl = document.createElement('audio');
-    audioEl.className = 'msg-audio';
-    audioEl.controls = true;
-    // The source is an in-memory object URL by the time it is set, so there
-    // is nothing to fetch: loading it in full costs no network at all and is
-    // what makes the play button respond on the first tap instead of
-    // buffering.
-    audioEl.preload = 'auto';
-
-    audioWrap.appendChild(status);
-    audioWrap.appendChild(audioEl);
-
-    // Arriving intact and being playable are two different things, and only
-    // the first was ever checked. A voice note recorded in WebM on Android
-    // downloads perfectly onto an iPhone and then cannot be decoded there at
-    // all — the fetch resolves, the player is revealed, and it sits dead with
-    // nothing said. New recordings are MP4/AAC now (see AUDIO_RECORDING_TYPES)
-    // so this should stop happening, but everything already in the history
-    // keeps whatever format it was recorded in, and a .mov from an iPhone has
-    // the same problem in the other direction. Say so rather than showing a
-    // player that will never play.
-    audioEl.addEventListener('error', () => {
-      // Only meaningful once a source has actually been attached: clearing
-      // src to release a blob also fires this.
-      if (!audioEl.getAttribute('src')) return;
-      audioWrap.dataset.state = 'error';
-      status.textContent = 'This voice message can’t be played on this device';
-      status.disabled = false;
-    });
-
-    const loadAudio = () => {
-      audioWrap.dataset.state = 'loading';
-      status.textContent = 'Loading voice message…';
-      status.disabled = true;
-      resolveMedia(msg)
-        .then((objectUrl) => {
-          audioEl.src = objectUrl;
-          audioWrap.dataset.state = 'ready';
-        })
-        .catch(() => {
-          audioWrap.dataset.state = 'error';
-          status.textContent = 'Voice message didn’t load — tap to retry';
-          status.disabled = false;
-        });
-    };
-
-    status.addEventListener('click', loadAudio);
-    loadAudio();
-
-    bubble.appendChild(audioWrap);
+    bubble.appendChild(buildVoicePlayer(msg));
   } else if (msg.mediaUrl) {
     const mediaWrap = document.createElement('div');
     mediaWrap.className = 'msg-media-wrap';
@@ -936,7 +1071,7 @@ async function sendCurrentMessage() {
 
 // Used by camera capture and voice notes: a single already-uploaded media
 // result, optionally paired with whatever text is currently typed.
-async function sendUploadedMedia(uploadResult) {
+async function sendUploadedMedia(uploadResult, { durationMs = null } = {}) {
   const text = messageInput.value.trim();
   messageInput.value = '';
   messageInput.style.height = 'auto';
@@ -945,7 +1080,12 @@ async function sendUploadedMedia(uploadResult) {
     const { message } = await Api.sendSecretMessage({
       text,
       mediaUrl: uploadResult.url,
-      mediaType: uploadResult.type
+      mediaType: uploadResult.type,
+      // Measured here rather than read back off the file: a WebM container
+      // written by MediaRecorder has no duration in its header, so the player
+      // on the other side has nothing to show until it has downloaded and
+      // scanned the whole thing. The recorder always knows.
+      mediaDurationMs: durationMs
     });
     appendMessages([message]);
   } catch (err) {
@@ -1064,9 +1204,16 @@ function pickRecordingType(candidates) {
 
 // Falls back to the browser's own default when none of the candidates are
 // supported, rather than refusing to record at all.
-function createRecorder(stream, candidates) {
+function createRecorder(stream, candidates, options = {}) {
   const mimeType = pickRecordingType(candidates);
-  return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  try {
+    return new MediaRecorder(stream, mimeType ? { mimeType, ...options } : options);
+  } catch (err) {
+    // A browser can advertise a codec through isTypeSupported and still refuse
+    // the bitrate alongside it. Losing the recording over a quality preference
+    // would be absurd, so drop the options and keep the format.
+    return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  }
 }
 
 // ---------- Camera capture (photo/video straight into chat) ----------
@@ -1303,37 +1450,100 @@ function setRecordingUiActive(active) {
   cameraBtn.disabled = active;
 }
 
+// Constraints chosen for a spoken monologue, not a phone call.
+//
+// echoCancellation is the significant one, and it is off on purpose. Asking
+// for it on Android hands the microphone to the platform's voice-communication
+// path, which is tuned for two-way calls: it downsamples, gates hard, and is
+// what makes a recorded note sound thin and distant next to the same phone's
+// own recorder app. There is nothing to cancel here anyway - any voice note
+// already playing is paused the moment recording starts (see below), so no
+// speaker output can leak into the capture. Noise suppression and gain control
+// are software and stay on; they help a phone held at arm's length.
+//
+// Every value is an ideal, not an exact, so a device that cannot honour one
+// simply ignores it instead of refusing the microphone outright.
+const VOICE_CAPTURE_CONSTRAINTS = {
+  channelCount: 1,
+  sampleRate: 48000,
+  echoCancellation: false,
+  noiseSuppression: true,
+  autoGainControl: true
+};
+
+// Opus at 96 kbps mono is past transparent for speech and still only ~12 KB a
+// second. Left unset, browsers disagree: some Android builds default far lower
+// and the result is audibly muddy on exactly the platform that matters most.
+const VOICE_BITS_PER_SECOND = 96000;
+
+// Data is handed over in one-second slices instead of a single blob at the
+// end. Nothing depends on the slices arriving, but it keeps peak memory flat
+// on a long note and stops a recorder that gets suspended mid-way from holding
+// the entire recording in one un-flushed buffer.
+const VOICE_TIMESLICE_MS = 1000;
+
+// A recording nobody stopped. Ten minutes is far more than any voice note and
+// still only ~7 MB, so this is a runaway guard, not a limit anyone will meet.
+const VOICE_MAX_MS = 10 * 60 * 1000;
+
+let voiceMaxTimer = null;
+
 async function startVoiceRecording() {
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: VOICE_CAPTURE_CONSTRAINTS });
   } catch (err) {
-    toast('Microphone access denied.');
-    return;
+    // A device that rejects the constraint set outright still deserves a
+    // recording - fall back to the plain request before giving up.
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err2) {
+      toast('Microphone access denied.');
+      return;
+    }
   }
+
+  // Nothing should be coming out of the speaker while the microphone is open.
+  pauseAllVoice(null);
 
   recordingStream = stream;
   audioChunks = [];
   voiceRecordingCancelled = false;
 
-  mediaRecorder = createRecorder(stream, AUDIO_RECORDING_TYPES);
+  mediaRecorder = createRecorder(stream, AUDIO_RECORDING_TYPES, {
+    audioBitsPerSecond: VOICE_BITS_PER_SECOND
+  });
 
   mediaRecorder.addEventListener('dataavailable', (e) => {
     if (e.data.size > 0) audioChunks.push(e.data);
   });
   mediaRecorder.addEventListener('stop', onVoiceRecordingStopped);
-  mediaRecorder.start();
+  mediaRecorder.start(VOICE_TIMESLICE_MS);
 
   recordingStartTime = Date.now();
   updateRecordingTimer();
   recordingTimerInterval = setInterval(updateRecordingTimer, 500);
+  clearTimeout(voiceMaxTimer);
+  voiceMaxTimer = setTimeout(() => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      toast('Voice message stopped at 10 minutes.');
+      mediaRecorder.stop();
+    }
+  }, VOICE_MAX_MS);
   setRecordingUiActive(true);
 }
 
 async function onVoiceRecordingStopped() {
+  // Read before anything async: the clock is the only record of how long this
+  // note runs, and the file itself may not carry it.
+  const durationMs = recordingStartTime ? Date.now() - recordingStartTime : null;
+
   stopRecordingTracks();
   clearInterval(recordingTimerInterval);
   recordingTimerInterval = null;
+  clearTimeout(voiceMaxTimer);
+  voiceMaxTimer = null;
+  recordingStartTime = null;
   setRecordingUiActive(false);
 
   const chunks = audioChunks;
@@ -1346,7 +1556,14 @@ async function onVoiceRecordingStopped() {
 
   const mimeType = mediaRecorder.mimeType || 'audio/webm';
   const blob = new Blob(chunks, { type: mimeType });
-  if (blob.size === 0) return;
+  // A tap that starts and stops the recorder inside the same moment produces a
+  // container header and nothing else - a file that is not empty but holds no
+  // audio, which uploads fine and then plays as silence. Judged on length
+  // rather than on size for that reason.
+  if (blob.size === 0 || !durationMs || durationMs < 350) {
+    if (blob.size > 0) toast('Too short - hold on a moment longer.');
+    return;
+  }
 
   const extension = mimeType.includes('mp4') ? 'm4a' : 'webm';
   const file = new File([blob], `voice-note.${extension}`, { type: mimeType });
@@ -1355,7 +1572,7 @@ async function onVoiceRecordingStopped() {
   micBtn.classList.add('uploading');
   try {
     const result = await Api.uploadSecretMediaAuto(file);
-    sendUploadedMedia(result);
+    await sendUploadedMedia(result, { durationMs });
   } catch (err) {
     toast(err.message);
   } finally {
@@ -1487,19 +1704,33 @@ function insertEmoji(emoji) {
   rememberEmoji(emoji);
 }
 
+// Nothing the device cannot draw is ever offered. The catalogue lists what
+// the standard has; `isEmojiRenderable` knows what this screen can show (see
+// emoji.js). Filtering at this one point covers the category grids, search
+// and recents alike.
+//
+// The toned variant is what gets checked, not the base: a font can have ✋
+// and still not have ✋🏿, and offering a tone that comes out as two glyphs is
+// the same bug in miniature.
+function renderable(list) {
+  return list.filter(isEmojiRenderable);
+}
+
 // Emoji have no names attached here, so search matches on the category name
 // instead — enough to jump to "flags" or "food" without a name database.
 function emojiForActiveView() {
   if (emojiSearchTerm) {
     const term = emojiSearchTerm.toLowerCase();
-    return EMOJI_CATEGORIES.filter(
-      (c) => c.name.toLowerCase().includes(term) || c.id.includes(term)
-    ).flatMap((c) => c.emoji.map((e) => toneFor(e, c.id)));
+    return renderable(
+      EMOJI_CATEGORIES.filter(
+        (c) => c.name.toLowerCase().includes(term) || c.id.includes(term)
+      ).flatMap((c) => c.emoji.map((e) => toneFor(e, c.id)))
+    );
   }
-  if (activeCategoryId === 'recent') return getRecentEmoji();
+  if (activeCategoryId === 'recent') return renderable(getRecentEmoji());
   const category = EMOJI_CATEGORIES.find((c) => c.id === activeCategoryId);
   if (!category) return [];
-  return category.emoji.map((e) => toneFor(e, category.id));
+  return renderable(category.emoji.map((e) => toneFor(e, category.id)));
 }
 
 function toneFor(emoji, categoryId) {
@@ -1591,6 +1822,14 @@ function buildEmojiPicker() {
 }
 
 buildEmojiPicker();
+
+// The support probe is synchronous canvas work plus, where there is a gap, a
+// font download — so the picker is built immediately from the full catalogue
+// and redrawn once the answer is in. Anyone opening it inside that window
+// sees the grid update rather than an empty panel.
+ensureEmojiSupportChecked()
+  .then(() => renderEmojiGrid())
+  .catch(() => {});
 
 secretEmojiBtn.addEventListener('click', (e) => {
   e.stopPropagation();

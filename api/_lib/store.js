@@ -354,7 +354,22 @@ async function appendMessageToStore(message, attempt = 0) {
   }
 }
 
-async function addMessage({ senderId, senderRole, text, mediaUrl, mediaType }) {
+// How long a voice note or clip actually runs, in milliseconds, measured by
+// the recorder that made it. Stored because the file itself cannot always be
+// trusted to say so: WebM written by MediaRecorder carries no duration in its
+// header, so a player asked before it has scanned the whole file answers
+// `Infinity` — which is what leaves a voice message with a broken seek bar and
+// no length. Knowing it up front also lets the row show "0:12" before a single
+// byte of audio has been fetched.
+const MAX_MEDIA_DURATION_MS = 6 * 60 * 60 * 1000;
+
+function normalizeDuration(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return Math.min(Math.round(ms), MAX_MEDIA_DURATION_MS);
+}
+
+async function addMessage({ senderId, senderRole, text, mediaUrl, mediaType, mediaDurationMs }) {
   const message = {
     id: crypto.randomUUID(),
     senderId,
@@ -364,6 +379,7 @@ async function addMessage({ senderId, senderRole, text, mediaUrl, mediaType }) {
     text: text || '',
     mediaUrl: mediaUrl || null,
     mediaType: mediaType || null,
+    mediaDurationMs: normalizeDuration(mediaDurationMs),
     createdAt: Date.now()
   };
   await appendMessageToStore(message);

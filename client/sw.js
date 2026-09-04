@@ -1,4 +1,4 @@
-const CACHE_NAME = 'puzzle-cache-v17';
+const CACHE_NAME = 'puzzle-cache-v18';
 const APP_SHELL = [
   './',
   './index.html',

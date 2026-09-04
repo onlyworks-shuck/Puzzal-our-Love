@@ -17,10 +17,19 @@ module.exports = async (req, res) => {
 
     const payload = parseBody(req);
     const text = (payload.text || '').trim().slice(0, 4000);
-    const { mediaUrl, mediaType } = payload;
+    const { mediaUrl, mediaType, mediaDurationMs } = payload;
     if (!text && !mediaUrl) return json(res, 400, { error: 'Message is empty' });
 
-    const message = await addMessage({ senderId: userId, senderRole, text, mediaUrl, mediaType });
+    // Only meaningful for something with a timeline, and sanitised in the
+    // store rather than trusted as it arrives.
+    const message = await addMessage({
+      senderId: userId,
+      senderRole,
+      text,
+      mediaUrl,
+      mediaType,
+      mediaDurationMs: mediaUrl ? mediaDurationMs : null
+    });
     // Returned through the same projection a read uses, so the row the
     // sender appends locally carries identical fields to the one everyone
     // else will poll for — otherwise their own message would render without
