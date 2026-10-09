@@ -5,39 +5,38 @@ const { ConfigError, signToken, toPublicUser } = require('../_lib/auth');
 const { findUserByUsername, addUser } = require('../_lib/store');
 
 // Health probe. It lives on this endpoint rather than its own /api/health
-// because a Vercel Hobby deployment is capped at 12 Serverless Functions and
-// this project sits at exactly 12 — a 13th file under /api fails the whole
-// build, which is what happened the last time one was added. Registration is
-// also the endpoint that fails first when a deployment is misconfigured, so
-// this is the most relevant place for it. It answers the GET that used to be
-// a bare 405, and reports environment variables as booleans only, never
-// their values.
+// because registration is the endpoint that fails first when a deployment is
+// misconfigured — a missing JWT_SECRET or a disconnected store breaks it for
+// every visitor — so this is the most relevant place for it, and adding a
+// route costs a redirect in netlify.toml plus a wrapper in
+// netlify/functions/. It answers the GET that used to be a bare 405, and
+// reports environment variables as booleans only, never their values.
 async function probe(res) {
   const blobStore = require('../_lib/blobStore');
-  // Taken from the storage layer rather than re-derived here, so the host this
-  // reports can never disagree with the host whose store it just read.
-  const onNetlify = blobStore.onNetlify;
 
-  // Only the variables that matter on the host actually running this, so a
-  // green probe means "this deployment is configured" rather than "some
-  // other host's variables are missing".
+  // This code runs on more than one Netlify site at a time, and the two look
+  // identical from the outside. `site` names the deployment that answered;
+  // `store` says whether it is reading its own site's blobs or another
+  // site's — i.e. whether it has its own conversation or shares one. Both are
+  // non-secret: the values are a site name and a yes/no. Everything else is
+  // reported as a boolean, never as a value.
+  const ownSite = process.env.SITE_ID || '';
+  const blobSite = process.env.BLOBS_SITE_ID || '';
   const env = {
     host: blobStore.host,
+    site: process.env.SITE_NAME || null,
+    store: !blobSite ? 'ambient' : blobSite === ownSite ? 'own' : 'shared',
     JWT_SECRET: !!process.env.JWT_SECRET,
     SECRET_CHAT_PASSWORD: !!process.env.SECRET_CHAT_PASSWORD,
     SECRET_CHAT_ADMIN_PASSWORD: !!process.env.SECRET_CHAT_ADMIN_PASSWORD,
-    ...(onNetlify
-      ? { BLOBS_SITE_ID: !!process.env.BLOBS_SITE_ID, BLOBS_TOKEN: !!process.env.BLOBS_TOKEN }
-      : {
-          BLOB_READ_WRITE_TOKEN: !!process.env.BLOB_READ_WRITE_TOKEN,
-          VERCEL_OIDC_TOKEN: !!process.env.VERCEL_OIDC_TOKEN,
-          BLOB_STORE_ID: !!process.env.BLOB_STORE_ID
-        })
+    BLOBS_SITE_ID: !!blobSite,
+    BLOBS_TOKEN: !!process.env.BLOBS_TOKEN
   };
 
-  // A real round-trip, because asking whether BLOB_READ_WRITE_TOKEN exists
-  // proves nothing: a store connected through the dashboard authenticates
-  // via OIDC and never sets it.
+  // A real round-trip, because asking whether the credentials are present
+  // proves nothing: they can be set and still be wrong, expired, or pointed
+  // at a site this token cannot read. Writing, reading back and deleting is
+  // the only trustworthy storage check.
   let blob;
   try {
     const stamp = `probe-${Date.now()}`;

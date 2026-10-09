@@ -26,12 +26,13 @@ function baseMimeType(value) {
   return typeof value === 'string' ? value.split(';')[0].trim().toLowerCase() : '';
 }
 
-// Vercel Serverless Functions cap request/response bodies at ~4.5MB, and
-// (unlike Netlify's Lambda-based functions) bodies here are NOT base64
-// inflated, so this ceiling maps directly to raw bytes. Files at or under
-// this size go through the simple single-request upload; anything bigger is
-// split client-side into pieces this size and streamed through the chunked
-// upload flow (secret-media-chunk.js + secret-media-finish.js).
+// Netlify Functions are Lambda-shaped and cap a synchronous request or
+// response payload at 6MB — and a binary body crosses that boundary base64
+// encoded, which inflates it by a third. 4MB of real bytes becomes ~5.33MB
+// on the wire, which fits; 4.5MB would not. Files at or under this size go
+// through the simple single-request upload; anything bigger is split
+// client-side into pieces this size and streamed through the chunked upload
+// flow (secret-media-chunk.js + secret-media-finish.js).
 const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
 
 // Overall ceiling for a single uploaded file (applies to the chunked flow).

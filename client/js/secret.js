@@ -452,6 +452,13 @@ window.SecretChat = {
     // tearing anything down — while the token and role are still around to
     // authenticate the call.
     if (state.unlocked) announcePresence(false);
+    // Closing the chat has to take the sound and the microphone with it.
+    // Neither stops on its own: the rows are only hidden, never removed, so a
+    // note playing through one keeps playing, and a recording left running
+    // holds the mic open and then uploads itself into a conversation the user
+    // has already left.
+    releaseAllVoicePlayers();
+    abandonVoiceRecording();
     state.unlocked = false;
     state.peerOnline = false;
     state.peerReadThrough = 0;
@@ -557,6 +564,66 @@ function pauseAllVoice(except) {
   });
 }
 
+// Hands a player back when its row goes away. Two different things make this
+// necessary, and they are not the same thing:
+//
+//   Removing a media element from the document pauses it — that part the
+//   browser does for us. But nothing removes it from voicePlayers, so the set
+//   only ever grows: every rebuild leaves another dead element in it, each
+//   still holding a decoded buffer, and pauseAllVoice walks all of them on
+//   every play.
+//
+//   Hiding is not removing. Closing the chat only adds a class to #chat-root;
+//   the rows stay in the document and a note playing through one carries on
+//   playing, out of a chat the user has already left. Only an explicit pause
+//   stops that.
+//
+// Clearing the source is what drops the decoded buffer. The error handler
+// ignores a src-less element on purpose, so this stays quiet.
+function releaseVoicePlayer(audio) {
+  audio.pause();
+  audio.removeAttribute('src');
+  audio.load();
+  voicePlayers.delete(audio);
+}
+
+// isConnected is the authority rather than a list of message ids, so a row
+// removed by any route at all is covered by the same sweep. The browser has
+// already paused these; what is left is to stop tracking them.
+function releaseDetachedVoicePlayers() {
+  voicePlayers.forEach((audio) => {
+    if (!audio.isConnected) releaseVoicePlayer(audio);
+  });
+}
+
+function releaseAllVoicePlayers() {
+  [...voicePlayers].forEach(releaseVoicePlayer);
+}
+
+// Carries a note that is mid-playback across a rebuild of the list.
+//
+// Taking the row out of the document pauses whatever was playing through it —
+// the browser does that on its own, and it is why loading older messages or
+// entering selection mode while listening cuts the note off mid-word. The
+// rebuild is invisible from the outside, so that reads as the player breaking.
+// Only one note can be playing at a time (pauseAllVoice guarantees it), so
+// this is a single slot, and it is overwritten on every rebuild so a stale one
+// cannot fire later.
+let resumeVoice = null;
+
+function captureVoicePlaybackForRebuild() {
+  resumeVoice = null;
+  voicePlayers.forEach((audio) => {
+    if (!audio.paused && audio.dataset.messageId) {
+      resumeVoice = {
+        id: audio.dataset.messageId,
+        time: audio.currentTime,
+        rate: audio.playbackRate
+      };
+    }
+  });
+}
+
 const VOICE_SPEEDS = [1, 1.5, 2];
 const UNPLAYABLE_TEXT = 'This voice message can\u2019t be played on this device';
 
@@ -573,6 +640,9 @@ function buildVoicePlayer(msg) {
 
   const audio = document.createElement('audio');
   audio.className = 'msg-audio';
+  // Read back by captureVoicePlaybackForRebuild to know which row to hand
+  // playback to after the list is rebuilt.
+  audio.dataset.messageId = msg.id;
   // The source is an in-memory object URL by the time it is set, so loading it
   // in full costs no network and is what makes the first tap play at once
   // instead of buffering.
@@ -617,7 +687,13 @@ function buildVoicePlayer(msg) {
     return knownDuration || 0;
   }
 
+  // Set while the duration is being forced out of a container that omits it
+  // (see resolveUnknownDuration). The seek that does it drives currentTime to
+  // an absurd value, and painting that lands a flash of nonsense in the row.
+  let measuringDuration = false;
+
   function paint() {
+    if (measuringDuration) return;
     const total = effectiveDuration();
     const at = audio.currentTime || 0;
     seek.value = String(total > 0 ? Math.min(1000, Math.round((at / total) * 1000)) : 0);
@@ -633,8 +709,10 @@ function buildVoicePlayer(msg) {
   // is missing, which means messages sent before this shipped.
   function resolveUnknownDuration() {
     if (knownDuration || Number.isFinite(audio.duration)) return;
+    measuringDuration = true;
     const restore = () => {
       audio.removeEventListener('timeupdate', restore);
+      measuringDuration = false;
       audio.currentTime = 0;
       if (Number.isFinite(audio.duration)) knownDuration = audio.duration;
       paint();
@@ -644,12 +722,18 @@ function buildVoicePlayer(msg) {
       audio.currentTime = 1e101;
     } catch (err) {
       audio.removeEventListener('timeupdate', restore);
+      measuringDuration = false;
     }
   }
 
   audio.addEventListener('loadedmetadata', () => {
     if (Number.isFinite(audio.duration) && audio.duration > 0) knownDuration = audio.duration;
-    else resolveUnknownDuration();
+    // Not while this row is about to take over playback from a rebuild: the
+    // measurement works by seeking to the end, which would fight the resume
+    // for currentTime. Only legacy notes sent before mediaDurationMs existed
+    // can reach both paths at once, and continuing to play matters more than
+    // labelling their length.
+    else if (!(resumeVoice && resumeVoice.id === msg.id)) resolveUnknownDuration();
     paint();
   });
   audio.addEventListener('timeupdate', paint);
@@ -704,6 +788,26 @@ function buildVoicePlayer(msg) {
     speedBtn.textContent = next + '\u00d7';
   });
 
+  // Picks up playback this row inherited from a rebuild. Consumed on the first
+  // match so a note can never be restarted twice, and a play() the browser
+  // refuses just leaves the row paused at the right position rather than
+  // throwing — no worse than the stop this exists to avoid.
+  function maybeResumePlayback() {
+    if (!resumeVoice || resumeVoice.id !== msg.id) return;
+    const { time, rate } = resumeVoice;
+    resumeVoice = null;
+    audio.playbackRate = rate;
+    speedBtn.textContent = rate + '×';
+    const start = () => {
+      audio.currentTime = time;
+      paint();
+      audio.play().catch(() => {});
+    };
+    // currentTime cannot be set before the duration is known.
+    if (audio.readyState >= 1) start();
+    else audio.addEventListener('loadedmetadata', start, { once: true });
+  }
+
   const loadAudio = () => {
     wrap.dataset.state = 'loading';
     status.textContent = 'Loading voice message\u2026';
@@ -714,6 +818,7 @@ function buildVoicePlayer(msg) {
         wrap.dataset.state = 'ready';
         voicePlayers.add(audio);
         paint();
+        maybeResumePlayback();
       })
       .catch(() => {
         wrap.dataset.state = 'error';
@@ -904,7 +1009,9 @@ function appendSingleRow(msg, { scroll = true } = {}) {
 // served from cache, so this never re-triggers a network fetch for
 // already-seen messages.
 function renderAll() {
+  captureVoicePlaybackForRebuild();
   messagesEl.innerHTML = '';
+  releaseDetachedVoicePlayers();
   rowsById.clear();
   lastDateKey = null;
   state.messages.forEach((msg) => appendSingleRow(msg, { scroll: false }));
@@ -990,6 +1097,7 @@ function removeMessageRows(ids) {
       mediaObjectUrlCache.delete(id);
     }
   });
+  releaseDetachedVoicePlayers();
   state.messages = state.messages.filter((m) => !idSet.has(m.id));
 }
 
@@ -1205,6 +1313,10 @@ function pickRecordingType(candidates) {
 // Falls back to the browser's own default when none of the candidates are
 // supported, rather than refusing to record at all.
 function createRecorder(stream, candidates, options = {}) {
+  // Both constructor calls below would throw ReferenceError without this, and
+  // the second one is outside the try — so the caller would take an exception
+  // with the microphone already open.
+  if (!window.MediaRecorder) return null;
   const mimeType = pickRecordingType(candidates);
   try {
     return new MediaRecorder(stream, mimeType ? { mimeType, ...options } : options);
@@ -1426,6 +1538,14 @@ let recordingStartTime = null;
 let recordingTimerInterval = null;
 let voiceRecordingCancelled = false;
 
+// Both halves of the mic button are asynchronous — getUserMedia waits on the
+// permission prompt, and the recorder's 'stop' event lands a tick after stop()
+// is called. Two quick taps across either gap opened a second microphone, or
+// started a recording that reset recordingStartTime and audioChunks out from
+// under the stop handler still finishing the previous one, landing a note with
+// the wrong length or no audio in it at all.
+let voiceBusy = false;
+
 function updateRecordingTimer() {
   const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
   const mins = Math.floor(elapsed / 60);
@@ -1438,6 +1558,24 @@ function stopRecordingTracks() {
     recordingStream.getTracks().forEach((track) => track.stop());
     recordingStream = null;
   }
+}
+
+// Give up on whatever is being recorded and close the microphone now. Marking
+// it cancelled first is what stops the pending 'stop' handler from uploading
+// and posting the note; stopping the tracks directly covers the case where
+// there is a live stream but no recorder running behind it, which is where a
+// failed start leaves things.
+function abandonVoiceRecording() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    voiceRecordingCancelled = true;
+    mediaRecorder.stop();
+  }
+  stopRecordingTracks();
+  clearInterval(recordingTimerInterval);
+  recordingTimerInterval = null;
+  clearTimeout(voiceMaxTimer);
+  voiceMaxTimer = null;
+  setRecordingUiActive(false);
 }
 
 function setRecordingUiActive(active) {
@@ -1514,11 +1652,30 @@ async function startVoiceRecording() {
     audioBitsPerSecond: VOICE_BITS_PER_SECOND
   });
 
+  // getUserMedia has already succeeded at this point, so the microphone is
+  // live. Every path out of here from now on has to close it: bailing without
+  // doing so leaves the browser's recording indicator lit with nothing in the
+  // app able to turn it off.
+  if (!mediaRecorder) {
+    stopRecordingTracks();
+    toast('Voice notes aren’t supported on this browser.');
+    return;
+  }
+
   mediaRecorder.addEventListener('dataavailable', (e) => {
     if (e.data.size > 0) audioChunks.push(e.data);
   });
   mediaRecorder.addEventListener('stop', onVoiceRecordingStopped);
-  mediaRecorder.start(VOICE_TIMESLICE_MS);
+  try {
+    mediaRecorder.start(VOICE_TIMESLICE_MS);
+  } catch (err) {
+    // A recorder that never started never fires 'stop', so the teardown in
+    // onVoiceRecordingStopped will not run for it.
+    mediaRecorder = null;
+    stopRecordingTracks();
+    toast('Could not start recording.');
+    return;
+  }
 
   recordingStartTime = Date.now();
   updateRecordingTimer();
@@ -1545,6 +1702,10 @@ async function onVoiceRecordingStopped() {
   voiceMaxTimer = null;
   recordingStartTime = null;
   setRecordingUiActive(false);
+  // Safe to release the button here rather than after the upload: from this
+  // point the recorder is inactive, and the upload below disables the button
+  // on its own for as long as it runs.
+  voiceBusy = false;
 
   const chunks = audioChunks;
   audioChunks = [];
@@ -1582,15 +1743,22 @@ async function onVoiceRecordingStopped() {
 }
 
 micBtn.addEventListener('click', () => {
+  if (voiceBusy) return;
+  voiceBusy = true;
   if (mediaRecorder && mediaRecorder.state === 'recording') {
+    // Cleared by onVoiceRecordingStopped, which the stop event always reaches.
     mediaRecorder.stop();
   } else {
-    startVoiceRecording();
+    startVoiceRecording().finally(() => {
+      voiceBusy = false;
+    });
   }
 });
 
 voiceCancelBtn.addEventListener('click', () => {
+  if (voiceBusy) return;
   if (mediaRecorder && mediaRecorder.state === 'recording') {
+    voiceBusy = true;
     voiceRecordingCancelled = true;
     mediaRecorder.stop();
   }

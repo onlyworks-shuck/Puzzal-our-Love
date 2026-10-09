@@ -2,10 +2,9 @@
   "name": "game-api",
   "version": "1.0.0",
   "private": true,
-  "description": "Static site + serverless API for the puzzle/chat project. One /api codebase, deployed to both Netlify and Vercel.",
+  "description": "Static site + serverless API for the puzzle/chat project. One /api codebase, deployed to two independent Netlify sites.",
   "dependencies": {
     "@netlify/blobs": "^8.2.0",
-    "@vercel/blob": "^2.8.0",
     "bcryptjs": "^2.4.3",
     "busboy": "^1.6.0",
     "jsonwebtoken": "^9.0.2"

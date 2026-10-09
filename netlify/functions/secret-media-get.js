@@ -1,5 +1,5 @@
 const { toNetlify } = require('../lib/adapter');
 
-// Netlify entry point. All logic lives in ../../api/secret/media-get.js — shared verbatim with the
-// Vercel deployment so the two hosts cannot drift apart.
+// Netlify entry point. All logic lives in ../../api/secret/media-get.js — shared verbatim
+// with every other site running this code, so deployments cannot drift apart.
 exports.handler = toNetlify(require('../../api/secret/media-get.js'));

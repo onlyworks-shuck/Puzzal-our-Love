@@ -1,9 +1,6 @@
 node_modules/
 .DS_Store
 
-# Local Vercel folder
-.vercel
-
 # Storage credential read by scripts/export-chat.js. Never commit this, and
 # never paste it into a chat — a credential in a transcript is a burned one.
 .blob-token
@@ -17,5 +14,5 @@ Game-backup-netlify/
 Game-backup-netlify-2026-08-26/
 Game-frozen-*/
 
-.vercel
+# Local env files. Never commit these — they hold live credentials.
 .env*

@@ -1,10 +1,10 @@
 const Busboy = require('busboy');
 const { baseMimeType } = require('./mediaLimits');
 
-// Vercel only auto-parses application/json, urlencoded and text/plain
-// bodies into req.body — multipart/form-data is left as a raw Buffer. Some
-// runtime versions instead leave the stream unconsumed, so this handles
-// both: use req.body if it's already a Buffer, otherwise read the stream.
+// Only application/json, urlencoded and text/plain bodies are auto-parsed
+// into req.body — multipart/form-data is left as a raw Buffer. Some runtime
+// versions instead leave the stream unconsumed, so this handles both: use
+// req.body if it's already a Buffer, otherwise read the stream.
 function getRawBody(req) {
   if (Buffer.isBuffer(req.body)) return Promise.resolve(req.body);
   if (typeof req.body === 'string') return Promise.resolve(Buffer.from(req.body, 'utf8'));

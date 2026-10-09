@@ -578,8 +578,8 @@ async function getMedia(id) {
 
 // ---------- Chunked media storage (current scheme) ----------
 // Large files are both uploaded and served back as a sequence of small
-// pieces instead of one shot, to stay under Vercel's ~4.5MB request/response
-// cap. Each piece is stashed under its own blob key permanently (never
+// pieces instead of one shot, to stay under the function payload cap (see
+// MAX_CHUNK_BYTES). Each piece is stashed under its own blob key permanently (never
 // stitched into one big blob — a stitched file could never be read back in
 // a single response either). Chunks for a given media id are always
 // written sequentially by the same client, so there's no concurrent-writer

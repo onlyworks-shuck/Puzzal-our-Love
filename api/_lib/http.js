@@ -2,9 +2,9 @@ function json(res, statusCode, body) {
   res.status(statusCode).json(body);
 }
 
-// Vercel auto-parses `application/json` request bodies into req.body, so
-// there's no manual JSON.parse step needed the way Netlify's raw event.body
-// required — this just guards against a missing/non-object body.
+// The adapter hands `application/json` request bodies over already parsed
+// into req.body (see netlify/lib/adapter.js), so there's no JSON.parse step
+// here — this just guards against a missing/non-object body.
 function parseBody(req) {
   return req.body && typeof req.body === 'object' ? req.body : {};
 }
@@ -12,7 +12,7 @@ function parseBody(req) {
 // Answering a failure *and* leaving a trace of what actually failed.
 //
 // Every handler used to end in `catch (err) { return json(res, 500, ...) }`,
-// which discarded `err` entirely. The Vercel runtime log then showed a bare
+// which discarded `err` entirely. The function log then showed a bare
 // 500 with no cause, so an outage could only be diagnosed by redeploying a
 // throwaway probe endpoint — which is exactly what had to be done, twice.
 // The message still tells the caller nothing sensitive; the stack goes to

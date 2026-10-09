@@ -1,9 +1,15 @@
 # Netlify deployment for the 2048 game + hidden chat.
 #
-# The site is published from client/ and the backend runs as functions in
+# This same file configures BOTH live sites. The app runs on two independent
+# Netlify accounts so that when one account's monthly free-tier allowance runs
+# out the other keeps serving; each is published by CLI from this folder, so
+# the only thing that distinguishes them is their environment variables (see
+# BLOBS_SITE_ID / BLOBS_TOKEN in api/_lib/blobStore.js).
+#
+# A site is published from client/ and the backend runs as functions in
 # netlify/functions/, each of which is a two-line wrapper around the matching
-# handler in /api. /api is the single source of truth shared with the Vercel
-# deployment — see netlify/lib/adapter.js.
+# handler in /api. /api is the single source of truth for both sites — see
+# netlify/lib/adapter.js.
 #
 # The adapter lives in netlify/lib/, not netlify/functions/, on purpose:
 # every top-level file in the functions directory is published as its own

@@ -2,12 +2,13 @@ const { Readable } = require('stream');
 
 // Runs an /api handler unchanged on Netlify.
 //
-// The twelve handlers in /api are written to the (req, res) convention Vercel
-// uses. Netlify Functions are Lambda-shaped: one `event` in, one
-// { statusCode, headers, body } out. Rather than fork twelve files — which is
-// what happened the last time this app lived on two hosts, and they drifted
-// until only one of them worked — this shim translates between the two
-// shapes, and the handlers themselves are byte-identical on both deployments.
+// The twelve handlers in /api are written to the plain (req, res) convention.
+// Netlify Functions are Lambda-shaped: one `event` in, one
+// { statusCode, headers, body } out. Rather than rewrite twelve files against
+// the Lambda shape — and rather than fork them per deployment, which is what
+// happened the last time this app lived on two hosts, and they drifted until
+// only one of them worked — this shim translates between the two shapes. The
+// handlers stay byte-identical on every site that runs this code.
 //
 // The surface below is not a general Express polyfill. It is exactly what the
 // twelve handlers actually touch, verified by reading all of them:
@@ -25,9 +26,9 @@ function buildRequest(event) {
     raw = event.isBase64Encoded ? Buffer.from(event.body, 'base64') : Buffer.from(event.body, 'utf8');
   }
 
-  // Vercel auto-parses JSON into an object and leaves multipart as a raw
-  // Buffer, and the handlers rely on both behaviours: http.parseBody() wants
-  // the object, multipart.getRawBody() checks Buffer.isBuffer() first.
+  // JSON is parsed into an object and multipart left as a raw Buffer, because
+  // the handlers rely on both: http.parseBody() wants the object,
+  // multipart.getRawBody() checks Buffer.isBuffer() first.
   let body;
   if (contentType.includes('application/json')) {
     try {

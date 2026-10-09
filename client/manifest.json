@@ -29,11 +29,5 @@
       "purpose": "maskable"
     }
   ],
-  "prefer_related_applications": false,
-  "related_applications": [
-    {
-      "platform": "webapp",
-      "url": "https://puzzal-game-seven.vercel.app/manifest.json"
-    }
-  ]
+  "prefer_related_applications": false
 }

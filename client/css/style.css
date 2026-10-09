@@ -133,7 +133,7 @@ input, textarea { font-family: inherit; }
   inset: 0;
   z-index: 0;
   background-color: var(--wa-chat-bg);
-  background-image: linear-gradient(rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0.32)), url('../assets/bg-fb1e393c6197c8710f5f43c7830bbb708eed41ea.jpg');
+  background-image: linear-gradient(rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0.32)), url('../assets/bg-28e5357f85b63f38a0af226ba502cf4ede69fcb2.png');
   background-size: cover;
   /* Vertically biased toward the top: on a landscape screen 'cover' crops the
      top and bottom off this portrait photo, and dead-centre cuts through the

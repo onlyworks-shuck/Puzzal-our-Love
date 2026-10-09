@@ -7,7 +7,8 @@ const { sweepAbandonedUploads } = require('./_lib/store');
 // the app can ever display or delete them; without this they accumulate in
 // the store indefinitely.
 //
-// Run on a schedule (see vercel.json "crons"). Only touches uploads with no
+// Run on a schedule (see the [functions."cleanup-orphans"] block in
+// netlify.toml). Only touches uploads with no
 // completed media record that haven't been written to for 24 hours, so an
 // upload in progress is never disturbed. That makes it safe to re-run and
 // safe to trigger early — it can only ever delete data that is already
